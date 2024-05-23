@@ -3,7 +3,7 @@
 cmake_minimum_required(VERSION 3.18)
 set(RUSTC_MINIMUM_REQUIRED 1.56)
 
-project(ggrs-cpp
+project(ggrsc
         VERSION "0.1.0"
         DESCRIPTION "A demo app to show a CMake project with components written in Rust.")
 
@@ -49,6 +49,13 @@ add_rust_library(TARGET ggrsc
     SOURCE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     BINARY_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
+if (WIN32)
+    # The following windows dlls are linked based on the following thread.
+    # https://users.rust-lang.org/t/rust-compiler-error-when-linking-with-windows-dll/98504/3
+    target_link_libraries(ggrsc PUBLIC INTERFACE Userenv wsock32 ws2_32 bcrypt ntdll)
+endif()
+
+
 install(FILES $<TARGET_FILE:ggrsc> DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT libraries)
 
 
