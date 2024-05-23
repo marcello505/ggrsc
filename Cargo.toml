@@ -1,5 +1,5 @@
 [package]
-name = "ggrs-cpp"
+name = "ggrsc"
 version = "0.1.0"
 edition = "2021"
 authors = ["Marcello Haddeman <haddemanmarcello@gmail.com>"]
@@ -9,7 +9,7 @@ license = "MIT"
 ggrs = "0.10"
 
 [lib]
-name = "ggrs_cpp"
+name = "ggrsc"
 crate-type = ["staticlib"]
 
 [build-dependencies]

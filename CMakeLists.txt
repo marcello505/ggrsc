@@ -45,12 +45,11 @@ include(CPack)
 #
 # Build targets.
 #
-add_rust_library(TARGET ggrs_cpp
+add_rust_library(TARGET ggrsc
     SOURCE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     BINARY_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
-install(FILES $<TARGET_FILE:ggrs_cpp> DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT libraries)
-add_library(ggrs-cpp ALIAS ggrs_cpp)
+install(FILES $<TARGET_FILE:ggrsc> DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT libraries)
 
 
 #

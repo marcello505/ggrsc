@@ -28,7 +28,8 @@ pub struct CSessionBuilderSettings{
     num_players: usize,
     sparse_saving: bool,
     local_player_handles: Vec<CPlayerHandle>,
-    remote_player_handles: Vec<(CPlayerHandle, SocketAddr)>
+    remote_player_handles: Vec<(CPlayerHandle, SocketAddr)>,
+    host_port: u16
 }
 impl CSessionBuilderSettings {
     const fn new() -> Self {
@@ -38,18 +39,25 @@ impl CSessionBuilderSettings {
             num_players: 2,
             sparse_saving: false,
             local_player_handles: Vec::new(),
-            remote_player_handles: Vec::new()
+            remote_player_handles: Vec::new(),
+            host_port: 30000
         }
     }
 }
 
 #[repr(u8)]
-enum CRequestType{
+pub enum CRequestType{
     AdvanceFrame,
     SetInput,
     LoadGameState,
     SaveGameState,
     None
+}
+
+#[repr(u8)]
+pub enum CSessionState {
+    Synchronizing,
+    Running
 }
 
 #[repr(C)]
@@ -107,11 +115,13 @@ impl CRequest {
 }
 
 enum CSessionType {
-    SyncTest
+    SyncTest,
+    P2P
 }
 
 enum CSession{
-    SyncTest(SyncTestSession<CConfig>)
+    SyncTest(SyncTestSession<CConfig>),
+    P2P(P2PSession<CConfig>)
 }
 
 static mut SB_SETTINGS: CSessionBuilderSettings = CSessionBuilderSettings::new();
@@ -181,6 +191,13 @@ pub extern fn ggrs_builder_add_remote_player_ipv6(player_handle: CPlayerHandle, 
     }
 }
 
+#[no_mangle]
+pub extern fn ggrs_builder_set_host_port(port: u16) {
+    unsafe{
+        SB_SETTINGS.host_port = port;
+    }
+}
+
 fn build_session(session_type: CSessionType) -> Result<CSessionHandle, GgrsError> {
     static mut SESSION_HANDLE: CSessionHandle = 1;
 
@@ -215,6 +232,13 @@ fn build_session(session_type: CSessionType) -> Result<CSessionHandle, GgrsError
                 REQUESTS.insert(handle, VecDeque::new());
             }
         }
+        CSessionType::P2P => {
+            unsafe{
+                let sess = sb.start_p2p_session(UdpNonBlockingSocket::bind_to_port(SB_SETTINGS.host_port).unwrap())?;
+                SESSIONS.insert(handle, CSession::P2P(sess));
+                REQUESTS.insert(handle, VecDeque::new());
+            }
+        }
     }
 
     Ok(handle)
@@ -229,6 +253,77 @@ pub extern fn ggrs_builder_start_synctest_session() -> CSessionHandle{
 }
 
 #[no_mangle]
+pub extern fn ggrs_builder_start_p2p_session() -> CSessionHandle{
+    match build_session(CSessionType::P2P) {
+        Ok(h) => h,
+        Err(_) => INVALID_HANDLE
+    }
+}
+
+#[no_mangle]
+pub extern fn ggrs_session_poll_remote_clients(handle: CSessionHandle)
+{
+    unsafe {
+        match SESSIONS.get_mut(&handle) {
+            Some(sess) => {
+                match sess {
+                    CSession::SyncTest(_) => {
+                        return;
+                    }
+                    CSession::P2P(p2p) => {
+                        p2p.poll_remote_clients();
+                    }
+                };
+            }
+            None => return
+        };
+    }
+}
+
+#[no_mangle]
+pub extern fn ggrs_session_current_state(handle: CSessionHandle) -> CSessionState
+{
+    unsafe {
+        match SESSIONS.get_mut(&handle) {
+            Some(sess) => {
+                match sess {
+                    CSession::SyncTest(_) => {
+                        CSessionState::Running
+                    }
+                    CSession::P2P(p2p) => {
+                        match p2p.current_state() {
+                            SessionState::Synchronizing => CSessionState::Synchronizing,
+                            SessionState::Running => CSessionState::Running
+                        }
+                    }
+                }
+            }
+            None => CSessionState::Running
+        }
+    }
+}
+
+#[no_mangle]
+pub extern fn ggrs_session_frames_ahead(handle: CSessionHandle) -> i32
+{
+    unsafe {
+        match SESSIONS.get_mut(&handle) {
+            Some(sess) => {
+                match sess {
+                    CSession::SyncTest(_) => {
+                        0
+                    }
+                    CSession::P2P(p2p) => {
+                        p2p.frames_ahead()
+                    }
+                }
+            }
+            None => 0
+        }
+    }
+}
+
+#[no_mangle]
 pub extern fn ggrs_session_add_local_input(handle: CSessionHandle, player_handle: CPlayerHandle, input: CInput) {
     unsafe {
         match SESSIONS.get_mut(&handle) {
@@ -236,6 +331,9 @@ pub extern fn ggrs_session_add_local_input(handle: CSessionHandle, player_handle
                 match sess {
                     CSession::SyncTest(st) => {
                         st.add_local_input(player_handle, input).unwrap();
+                    }
+                    CSession::P2P(p2p) => {
+                        p2p.add_local_input(player_handle, input).unwrap();
                     }
                 };
             }
@@ -256,6 +354,14 @@ pub extern fn ggrs_session_advance_frame(handle: CSessionHandle) {
                 match sess {
                     CSession::SyncTest(st) => {
                         match st.advance_frame() {
+                            Ok(req) => {
+                                ggrs_requests = req
+                            }
+                            Err(_) => return
+                        }
+                    }
+                    CSession::P2P(p2p) => {
+                        match p2p.advance_frame() {
                             Ok(req) => {
                                 ggrs_requests = req
                             }

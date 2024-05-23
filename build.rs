@@ -1,7 +1,7 @@
 use std::env;
 use std::path::{PathBuf};
 
-const C_HEADER_OUTPUT: &str = "ggrs-cpp.h";
+const C_HEADER_OUTPUT: &str = "ggrsc.h";
 
 // Environment variable name prefixes worth including for diags
 const ENV_PATTERNS: &[&str] = &["CARGO_", "RUST", "LIB"];
