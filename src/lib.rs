@@ -29,7 +29,8 @@ pub struct CSessionBuilderSettings{
     sparse_saving: bool,
     local_player_handles: Vec<CPlayerHandle>,
     remote_player_handles: Vec<(CPlayerHandle, SocketAddr)>,
-    host_port: u16
+    host_port: u16,
+    input_delay: usize
 }
 impl CSessionBuilderSettings {
     const fn new() -> Self {
@@ -40,7 +41,8 @@ impl CSessionBuilderSettings {
             sparse_saving: false,
             local_player_handles: Vec::new(),
             remote_player_handles: Vec::new(),
-            host_port: 30000
+            host_port: 30000,
+            input_delay: 2
         }
     }
 }
@@ -167,6 +169,13 @@ pub extern fn ggrs_builder_with_sparse_saving_mode(sparse_saving: bool) {
 }
 
 #[no_mangle]
+pub extern fn ggrs_builder_with_input_delay(delay: usize) {
+    unsafe{
+        SB_SETTINGS.input_delay = delay;
+    }
+}
+
+#[no_mangle]
 pub extern fn ggrs_builder_add_local_player(player_handle: CPlayerHandle) {
     unsafe{
         SB_SETTINGS.local_player_handles.push(player_handle);
@@ -211,7 +220,8 @@ fn build_session(session_type: CSessionType) -> Result<CSessionHandle, GgrsError
             .with_fps(SB_SETTINGS.fps)?
             .with_max_prediction_window(SB_SETTINGS.max_prediction)?
             .with_num_players(SB_SETTINGS.num_players)
-            .with_sparse_saving_mode(SB_SETTINGS.sparse_saving);
+            .with_sparse_saving_mode(SB_SETTINGS.sparse_saving)
+            .with_input_delay(SB_SETTINGS.input_delay);
 
         // Add local player handles
         for i in 0..SB_SETTINGS.local_player_handles.len() {
