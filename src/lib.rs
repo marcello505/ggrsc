@@ -1,25 +1,41 @@
 use ggrs::*;
 use std::collections::{BTreeMap, VecDeque};
 use std::vec::Vec;
+
+#[cfg(not(feature = "c_socket"))]
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
+#[cfg(not(feature = "c_socket"))]
 use std::ffi::{CStr, c_char};
 
+// Modules
+#[cfg(feature = "c_socket")]
+mod socket;
+
 // Types
-type CSessionHandle = u32;
-type CPlayerHandle = usize;
-type CFrame = i32;
-type CInput = u32;
+pub type CSessionHandle = u32;
+pub type CPlayerHandle = usize;
+pub type CFrame = i32;
+pub type CInput = u32;
 
 // Consts
 pub const INVALID_HANDLE: CSessionHandle = 0;
 
 pub struct CConfig;
+#[cfg(not(feature = "c_socket"))]
 impl ggrs::Config for CConfig
 {
     type Input = CInput;
     type State = u32;
     type Address = SocketAddr;
 }
+#[cfg(feature = "c_socket")]
+impl ggrs::Config for CConfig
+{
+    type Input = CInput;
+    type State = u32;
+    type Address = socket::CAddressHandle;
+}
+
 
 //#[derive(Clone, Copy)]
 pub struct CSessionBuilderSettings{
@@ -28,7 +44,10 @@ pub struct CSessionBuilderSettings{
     num_players: usize,
     sparse_saving: bool,
     local_player_handles: Vec<CPlayerHandle>,
+#[cfg(not(feature = "c_socket"))]
     remote_player_handles: Vec<(CPlayerHandle, SocketAddr)>,
+#[cfg(feature = "c_socket")]
+    remote_player_handles: Vec<(CPlayerHandle, socket::CAddressHandle)>,
     host_port: u16,
     input_delay: usize
 }
@@ -182,6 +201,7 @@ pub extern fn ggrs_builder_add_local_player(player_handle: CPlayerHandle) {
     }
 }
 
+#[cfg(not(feature = "c_socket"))]
 #[no_mangle]
 pub extern fn ggrs_builder_add_remote_player_ipv4(player_handle: CPlayerHandle, ipv4: *const c_char, port: u16) {
     unsafe{
@@ -191,12 +211,21 @@ pub extern fn ggrs_builder_add_remote_player_ipv4(player_handle: CPlayerHandle, 
     }
 }
 
+#[cfg(not(feature = "c_socket"))]
 #[no_mangle]
 pub extern fn ggrs_builder_add_remote_player_ipv6(player_handle: CPlayerHandle, ipv6: *const c_char, port: u16) {
     unsafe{
         let ipv6_cstr = CStr::from_ptr(ipv6);
         let addr: SocketAddr = SocketAddr::V6(SocketAddrV6::new(ipv6_cstr.to_str().unwrap().parse().unwrap(), port, 0, 0));
         SB_SETTINGS.remote_player_handles.push((player_handle, addr));
+    }
+}
+
+#[cfg(feature = "c_socket")]
+#[no_mangle]
+pub extern fn ggrs_builder_add_remote_player(player_handle: CPlayerHandle, addr_handle: socket::CAddressHandle) {
+    unsafe{
+        SB_SETTINGS.remote_player_handles.push((player_handle, addr_handle));
     }
 }
 
@@ -244,9 +273,16 @@ fn build_session(session_type: CSessionType) -> Result<CSessionHandle, GgrsError
         }
         CSessionType::P2P => {
             unsafe{
+                #[cfg(not(feature = "c_socket"))]
                 let sess = sb.start_p2p_session(UdpNonBlockingSocket::bind_to_port(SB_SETTINGS.host_port).unwrap())?;
+                #[cfg(feature = "c_socket")]
+                let sess = sb.start_p2p_session(socket::CSocket::new(handle))?;
                 SESSIONS.insert(handle, CSession::P2P(sess));
                 REQUESTS.insert(handle, VecDeque::new());
+                #[cfg(feature = "c_socket")]
+                socket::SOCKET_IN.insert(handle, VecDeque::new());
+                #[cfg(feature = "c_socket")]
+                socket::SOCKET_OUT.insert(handle, VecDeque::new());
             }
         }
     }
