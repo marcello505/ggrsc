@@ -39,4 +39,4 @@ default_features = true
 features = []
 
 [defines]
-"feature = c_socket" = "DEFINE_OWN_SOCKET"
+"feature = c_socket" = "DEFINE_C_SOCKET"
