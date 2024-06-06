@@ -13,28 +13,9 @@ pub struct CMessage {
     bytes: [u8; 255],
     bytes_length: u8
 }
-impl CMessage {
-    fn new(addr: CAddressHandle) -> Self {
-        Self {
-            valid: true,
-            addr,
-            bytes: [0; 255],
-            bytes_length: 0
-        }
-    }
 
-    fn new_none() -> Self {
-        Self {
-            valid: false,
-            addr: 0,
-            bytes: [0; 255],
-            bytes_length: 0
-        }
-    }
-}
-
-pub(crate) static mut SOCKET_OUT: BTreeMap<CSessionHandle, VecDeque<CMessage>> = BTreeMap::new();
-pub(crate) static mut SOCKET_IN: BTreeMap<CSessionHandle, VecDeque<CMessage>> = BTreeMap::new();
+pub(crate) static mut SOCKET_OUT: BTreeMap<CSessionHandle, VecDeque<(CAddressHandle, Message)>> = BTreeMap::new();
+pub(crate) static mut SOCKET_IN: BTreeMap<CSessionHandle, VecDeque<(CAddressHandle, Message)>> = BTreeMap::new();
 
 pub struct CSocket {
     session_handle: CSessionHandle,
@@ -49,17 +30,9 @@ impl CSocket {
 
 impl ggrs::NonBlockingSocket<CAddressHandle> for CSocket {
     fn send_to(&mut self, msg: &Message, addr: &CAddressHandle){
-        let mut c_msg: CMessage = CMessage::new(*addr);
-        let buf = rmp_serde::to_vec(msg).unwrap();
-
-        for byte in buf {
-            c_msg.bytes[c_msg.bytes_length as usize] = byte;
-            c_msg.bytes_length += 1;
-        }
-        
         unsafe {
             let sock_out = SOCKET_OUT.get_mut(&self.session_handle).unwrap();
-            sock_out.push_back(c_msg);
+            sock_out.push_back((*addr, msg.clone()));
         }
     }
 
@@ -68,34 +41,47 @@ impl ggrs::NonBlockingSocket<CAddressHandle> for CSocket {
         
         unsafe {
             let sock_in = SOCKET_IN.get_mut(&self.session_handle).unwrap();
-            match sock_in.pop_front() {
-                Some(cm) => {
-                    let msg: Message = rmp_serde::from_slice(&cm.bytes[0..cm.bytes_length as usize]).unwrap();
-                    result.push((cm.addr, msg))
+            while !sock_in.is_empty() {
+                match sock_in.pop_front() {
+                    Some(m) => {
+                        result.push((m.0, m.1));
+                    }
+                    None => {}
                 }
-                None => {}
             }
         }
-
         result
     }
 }
 
 #[no_mangle]
-pub extern fn ggrs_socket_in_message(session_handle: CSessionHandle, msg: CMessage) {
+pub extern fn ggrs_socket_in_message(session_handle: CSessionHandle, msg: &CMessage) {
     unsafe {
         let sock_in = SOCKET_IN.get_mut(&session_handle).unwrap();
-        sock_in.push_back(msg);
+        let msg_ggrs: Message = rmp_serde::from_slice(&msg.bytes[0..msg.bytes_length as usize]).unwrap();
+        sock_in.push_back((msg.addr, msg_ggrs));
     }
 }
 
 #[no_mangle]
-pub extern fn ggrs_socket_out_message(session_handle: CSessionHandle) -> CMessage {
+pub extern fn ggrs_socket_out_message(session_handle: CSessionHandle, msg: &mut CMessage) {
     unsafe {
         let sock_out = SOCKET_OUT.get_mut(&session_handle).unwrap();
         match sock_out.pop_front() {
-            Some(cm) => return cm,
-            None => return CMessage::new_none()
+            Some(m) => {
+                let buf = rmp_serde::to_vec(&m.1).unwrap();
+
+                msg.valid = true;
+                msg.bytes_length = 0;
+                for byte in buf {
+                   msg.bytes[msg.bytes_length as usize] = byte;
+                   msg.bytes_length += 1;
+                }
+
+            },
+            None => {
+                msg.valid = false;
+            }
         }
     }
 }
