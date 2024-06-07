@@ -8,7 +8,6 @@ pub type CAddressHandle = u32;
 
 #[repr(C)]
 pub struct CMessage {
-    valid: bool,
     addr: CAddressHandle,
     bytes: [u8; 255],
     bytes_length: u8
@@ -64,24 +63,21 @@ pub extern fn ggrs_socket_in_message(session_handle: CSessionHandle, msg: &CMess
 }
 
 #[no_mangle]
-pub extern fn ggrs_socket_out_message(session_handle: CSessionHandle, msg: &mut CMessage) {
+pub extern fn ggrs_socket_out_message(session_handle: CSessionHandle, msg: &mut CMessage) -> bool {
     unsafe {
         let sock_out = SOCKET_OUT.get_mut(&session_handle).unwrap();
         match sock_out.pop_front() {
             Some(m) => {
                 let buf = rmp_serde::to_vec(&m.1).unwrap();
 
-                msg.valid = true;
                 msg.bytes_length = 0;
                 for byte in buf {
                    msg.bytes[msg.bytes_length as usize] = byte;
                    msg.bytes_length += 1;
                 }
-
+                true
             },
-            None => {
-                msg.valid = false;
-            }
+            None => false
         }
     }
 }
