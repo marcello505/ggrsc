@@ -4,12 +4,14 @@ use rmp_serde;
 
 use std::collections::{BTreeMap, VecDeque};
 
+pub const CMESSAGE_BUFFER_SIZE: usize = 255;
+
 pub type CAddressHandle = u32;
 
 #[repr(C)]
 pub struct CMessage {
     addr: CAddressHandle,
-    bytes: [u8; 255],
+    bytes: [u8; CMESSAGE_BUFFER_SIZE],
     bytes_length: u32
 }
 
