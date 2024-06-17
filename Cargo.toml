@@ -17,5 +17,5 @@ crate-type = ["staticlib"]
 cbindgen = "0.26"
 
 [features]
-#default = ["c_socket"]
+default = ["c_socket"]
 c_socket = []
