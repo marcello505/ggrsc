@@ -10,7 +10,7 @@ pub type CAddressHandle = u32;
 pub struct CMessage {
     addr: CAddressHandle,
     bytes: [u8; 255],
-    bytes_length: u8
+    bytes_length: u32
 }
 
 pub(crate) static mut SOCKET_OUT: BTreeMap<CSessionHandle, VecDeque<(CAddressHandle, Message)>> = BTreeMap::new();
