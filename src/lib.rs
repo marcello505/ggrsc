@@ -469,3 +469,14 @@ pub extern fn ggrs_session_next_ggrsRequest(handle: CSessionHandle) -> CRequest 
     }
 }
 
+#[no_mangle]
+pub extern fn ggrs_session_close(handle: CSessionHandle) {
+    unsafe{
+        SESSIONS.remove(&handle);
+        REQUESTS.remove(&handle);
+        #[cfg(feature = "c_socket")]
+        socket::SOCKET_IN.remove(&handle);
+        #[cfg(feature = "c_socket")]
+        socket::SOCKET_OUT.remove(&handle);
+    }
+}
