@@ -72,6 +72,7 @@ pub extern fn ggrs_socket_out_message(session_handle: CSessionHandle, msg: &mut 
             Some(m) => {
                 let buf = rmp_serde::to_vec(&m.1).unwrap();
 
+                msg.addr = m.0;
                 msg.bytes_length = 0;
                 for byte in buf {
                    msg.bytes[msg.bytes_length as usize] = byte;
