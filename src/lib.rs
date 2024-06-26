@@ -135,6 +135,87 @@ impl CRequest {
     }
 }
 
+#[repr(u8)]
+pub enum CEventTypes {
+    Synchronizing,
+    Synchronized,
+    Disconnected,
+    NetworkInterrupted,
+    NetworkResumed,
+    WaitRecommendation,
+    DesyncDetected,
+    None
+}
+
+#[repr(C)]
+union CEventUnion {
+    skip_frames: u32,
+    dummy: u8
+}
+
+#[repr(C)]
+pub struct CEvent {
+    event_type: CEventTypes,
+    data: CEventUnion
+}
+impl CEvent {
+    const fn new_synchronizing() -> Self {
+        Self {
+            event_type: CEventTypes::Synchronizing,
+            data: CEventUnion { dummy: 0 }
+        }
+    }
+
+    const fn new_synchronized() -> Self {
+        Self {
+            event_type: CEventTypes::Synchronized,
+            data: CEventUnion { dummy: 0 }
+        }
+    }
+
+    const fn new_disconnected() -> Self {
+        Self {
+            event_type: CEventTypes::Disconnected,
+            data: CEventUnion { dummy: 0 }
+        }
+    }
+
+    const fn new_network_interrupted() -> Self {
+        Self {
+            event_type: CEventTypes::NetworkInterrupted,
+            data: CEventUnion { dummy: 0 }
+        }
+    }
+
+    const fn new_network_resumed() -> Self {
+        Self {
+            event_type: CEventTypes::NetworkResumed,
+            data: CEventUnion { dummy: 0 }
+        }
+    }
+
+    const fn new_wait_recommendation(skip_frames: &u32) -> Self {
+        Self {
+            event_type: CEventTypes::WaitRecommendation,
+            data: CEventUnion { skip_frames: *skip_frames }
+        }
+    }
+
+    const fn new_desync_detected() -> Self {
+        Self {
+            event_type: CEventTypes::DesyncDetected,
+            data: CEventUnion { dummy: 0 }
+        }
+    }
+
+    const fn new_none() -> Self {
+        Self {
+            event_type: CEventTypes::None,
+            data: CEventUnion { dummy: 0 }
+        }
+    }
+}
+
 enum CSessionType {
     SyncTest,
     P2P
@@ -148,6 +229,7 @@ enum CSession{
 static mut SB_SETTINGS: CSessionBuilderSettings = CSessionBuilderSettings::new();
 static mut SESSIONS: BTreeMap<CSessionHandle, CSession> = BTreeMap::new();
 static mut REQUESTS: BTreeMap<CSessionHandle, VecDeque<CRequest>> = BTreeMap::new();
+static mut EVENTS: BTreeMap<CSessionHandle, VecDeque<CEvent>> = BTreeMap::new();
 
 //////////////////////////////
 // SessionBuilder Functions //
@@ -269,6 +351,7 @@ fn build_session(session_type: CSessionType) -> Result<CSessionHandle, GgrsError
             unsafe{
                 SESSIONS.insert(handle, CSession::SyncTest(sess));
                 REQUESTS.insert(handle, VecDeque::new());
+                EVENTS.insert(handle, VecDeque::new());
             }
         }
         CSessionType::P2P => {
@@ -279,6 +362,7 @@ fn build_session(session_type: CSessionType) -> Result<CSessionHandle, GgrsError
                 let sess = sb.start_p2p_session(socket::CSocket::new(handle))?;
                 SESSIONS.insert(handle, CSession::P2P(sess));
                 REQUESTS.insert(handle, VecDeque::new());
+                EVENTS.insert(handle, VecDeque::new());
                 #[cfg(feature = "c_socket")]
                 socket::SOCKET_IN.insert(handle, VecDeque::new());
                 #[cfg(feature = "c_socket")]
@@ -470,10 +554,62 @@ pub extern fn ggrs_session_next_ggrsRequest(handle: CSessionHandle) -> CRequest 
 }
 
 #[no_mangle]
+pub extern fn ggrs_session_process_events(handle: CSessionHandle) -> () {
+    let c_events: &mut VecDeque<CEvent>;
+
+    unsafe {
+        match EVENTS.get_mut(&handle) {
+            Some(events) => {
+                c_events = events;
+            }
+            None => return
+        }
+
+        match SESSIONS.get_mut(&handle) {
+            Some(sess) => {
+                match sess {
+                    CSession::SyncTest(_) => return,
+                    CSession::P2P(p2p) => {
+                        for event in p2p.events() {
+                            match event {
+                                GgrsEvent::Synchronizing{..} => c_events.push_back(CEvent::new_synchronizing()),
+                                GgrsEvent::Synchronized{..} => c_events.push_back(CEvent::new_synchronized()),
+                                GgrsEvent::Disconnected{..} => c_events.push_back(CEvent::new_disconnected()),
+                                GgrsEvent::NetworkInterrupted{..} => c_events.push_back(CEvent::new_network_interrupted()),
+                                GgrsEvent::NetworkResumed{..} => c_events.push_back(CEvent::new_network_resumed()),
+                                GgrsEvent::WaitRecommendation{skip_frames} => c_events.push_back(CEvent::new_wait_recommendation(&skip_frames)),
+                                GgrsEvent::DesyncDetected{..} => c_events.push_back(CEvent::new_desync_detected())
+                            }
+                        }
+                    }
+                };
+            }
+            None => return
+        };
+    }
+}
+
+#[no_mangle]
+pub extern fn ggrs_session_next_event(handle: CSessionHandle) -> CEvent {
+    unsafe {
+        match EVENTS.get_mut(&handle) {
+            Some(events) => {
+                match events.pop_front() {
+                    Some(r) => return r,
+                    None => return CEvent::new_none()
+                };
+            }
+            None => return CEvent::new_none()
+        };
+    }
+}
+
+#[no_mangle]
 pub extern fn ggrs_session_close(handle: CSessionHandle) {
     unsafe{
         SESSIONS.remove(&handle);
         REQUESTS.remove(&handle);
+        EVENTS.remove(&handle);
         #[cfg(feature = "c_socket")]
         socket::SOCKET_IN.remove(&handle);
         #[cfg(feature = "c_socket")]
