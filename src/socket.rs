@@ -75,8 +75,10 @@ pub extern fn ggrs_socket_out_message(session_handle: CSessionHandle, msg: &mut 
                 msg.addr = m.0;
                 msg.bytes_length = 0;
                 for byte in buf {
-                   msg.bytes[msg.bytes_length as usize] = byte;
-                   msg.bytes_length += 1;
+                    if msg.bytes_length < CMESSAGE_BUFFER_SIZE as u32 {
+                        msg.bytes[msg.bytes_length as usize] = byte;
+                    }
+                    msg.bytes_length += 1;
                 }
                 true
             },
