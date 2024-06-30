@@ -48,6 +48,10 @@ pub struct CSessionBuilderSettings{
     remote_player_handles: Vec<(CPlayerHandle, SocketAddr)>,
 #[cfg(feature = "c_socket")]
     remote_player_handles: Vec<(CPlayerHandle, socket::CAddressHandle)>,
+#[cfg(not(feature = "c_socket"))]
+    spectator_player_handles: Vec<(CPlayerHandle, SocketAddr)>,
+#[cfg(feature = "c_socket")]
+    spectator_player_handles: Vec<(CPlayerHandle, socket::CAddressHandle)>,
     host_port: u16,
     input_delay: usize
 }
@@ -60,6 +64,7 @@ impl CSessionBuilderSettings {
             sparse_saving: false,
             local_player_handles: Vec::new(),
             remote_player_handles: Vec::new(),
+            spectator_player_handles: Vec::new(),
             host_port: 30000,
             input_delay: 2
         }
@@ -218,12 +223,14 @@ impl CEvent {
 
 enum CSessionType {
     SyncTest,
-    P2P
+    P2P,
+    Spectator
 }
 
 enum CSession{
     SyncTest(SyncTestSession<CConfig>),
-    P2P(P2PSession<CConfig>)
+    P2P(P2PSession<CConfig>),
+    Spectator(SpectatorSession<CConfig>)
 }
 
 static mut SB_SETTINGS: CSessionBuilderSettings = CSessionBuilderSettings::new();
@@ -311,6 +318,34 @@ pub extern fn ggrs_builder_add_remote_player(player_handle: CPlayerHandle, addr_
     }
 }
 
+#[cfg(not(feature = "c_socket"))]
+#[no_mangle]
+pub extern fn ggrs_builder_add_spectator_player_ipv4(player_handle: CPlayerHandle, ipv4: *const c_char, port: u16) {
+    unsafe{
+        let ipv4_cstr = CStr::from_ptr(ipv4);
+        let addr: SocketAddr = SocketAddr::V4(SocketAddrV4::new(ipv4_cstr.to_str().unwrap().parse().unwrap(), port));
+        SB_SETTINGS.spectator_player_handles.push((player_handle, addr));
+    }
+}
+
+#[cfg(not(feature = "c_socket"))]
+#[no_mangle]
+pub extern fn ggrs_builder_add_spectator_player_ipv6(player_handle: CPlayerHandle, ipv6: *const c_char, port: u16) {
+    unsafe{
+        let ipv6_cstr = CStr::from_ptr(ipv6);
+        let addr: SocketAddr = SocketAddr::V6(SocketAddrV6::new(ipv6_cstr.to_str().unwrap().parse().unwrap(), port, 0, 0));
+        SB_SETTINGS.spectator_player_handles.push((player_handle, addr));
+    }
+}
+
+#[cfg(feature = "c_socket")]
+#[no_mangle]
+pub extern fn ggrs_builder_add_spectator_player(player_handle: CPlayerHandle, addr_handle: socket::CAddressHandle) {
+    unsafe{
+        SB_SETTINGS.spectator_player_handles.push((player_handle, addr_handle));
+    }
+}
+
 #[no_mangle]
 pub extern fn ggrs_builder_set_host_port(port: u16) {
     unsafe{
@@ -343,6 +378,11 @@ fn build_session(session_type: CSessionType) -> Result<CSessionHandle, GgrsError
         for i in 0..SB_SETTINGS.remote_player_handles.len() {
             sb = sb.add_player(PlayerType::Remote(SB_SETTINGS.remote_player_handles[i].1), SB_SETTINGS.remote_player_handles[i].0)?;
         }
+
+        // Add spectator player handles
+        for i in 0..SB_SETTINGS.spectator_player_handles.len() {
+            sb = sb.add_player(PlayerType::Spectator(SB_SETTINGS.spectator_player_handles[i].1), SB_SETTINGS.spectator_player_handles[i].0)?;
+        }
     }
 
     match session_type {
@@ -361,6 +401,21 @@ fn build_session(session_type: CSessionType) -> Result<CSessionHandle, GgrsError
                 #[cfg(feature = "c_socket")]
                 let sess = sb.start_p2p_session(socket::CSocket::new(handle))?;
                 SESSIONS.insert(handle, CSession::P2P(sess));
+                REQUESTS.insert(handle, VecDeque::new());
+                EVENTS.insert(handle, VecDeque::new());
+                #[cfg(feature = "c_socket")]
+                socket::SOCKET_IN.insert(handle, VecDeque::new());
+                #[cfg(feature = "c_socket")]
+                socket::SOCKET_OUT.insert(handle, VecDeque::new());
+            }
+        }
+        CSessionType::Spectator => {
+            unsafe{
+                #[cfg(not(feature = "c_socket"))]
+                let sess = sb.start_spectator_session(SB_SETTINGS.remote_player_handles[0].1, UdpNonBlockingSocket::bind_to_port(SB_SETTINGS.host_port).unwrap());
+                #[cfg(feature = "c_socket")]
+                let sess = sb.start_spectator_session(SB_SETTINGS.remote_player_handles[0].1, socket::CSocket::new(handle));
+                SESSIONS.insert(handle, CSession::Spectator(sess));
                 REQUESTS.insert(handle, VecDeque::new());
                 EVENTS.insert(handle, VecDeque::new());
                 #[cfg(feature = "c_socket")]
@@ -391,6 +446,14 @@ pub extern fn ggrs_builder_start_p2p_session() -> CSessionHandle{
 }
 
 #[no_mangle]
+pub extern fn ggrs_builder_start_spectator_session() -> CSessionHandle{
+    match build_session(CSessionType::Spectator) {
+        Ok(h) => h,
+        Err(_) => INVALID_HANDLE
+    }
+}
+
+#[no_mangle]
 pub extern fn ggrs_session_poll_remote_clients(handle: CSessionHandle)
 {
     unsafe {
@@ -402,6 +465,9 @@ pub extern fn ggrs_session_poll_remote_clients(handle: CSessionHandle)
                     }
                     CSession::P2P(p2p) => {
                         p2p.poll_remote_clients();
+                    }
+                    CSession::Spectator(spectator) => {
+                        spectator.poll_remote_clients();
                     }
                 };
             }
@@ -426,6 +492,12 @@ pub extern fn ggrs_session_current_state(handle: CSessionHandle) -> CSessionStat
                             SessionState::Running => CSessionState::Running
                         }
                     }
+                    CSession::Spectator(spectator) => {
+                        match spectator.current_state() {
+                            SessionState::Synchronizing => CSessionState::Synchronizing,
+                            SessionState::Running => CSessionState::Running
+                        }
+                    }
                 }
             }
             None => CSessionState::Running
@@ -446,6 +518,9 @@ pub extern fn ggrs_session_frames_ahead(handle: CSessionHandle) -> i32
                     CSession::P2P(p2p) => {
                         p2p.frames_ahead()
                     }
+                    CSession::Spectator(_) => {
+                        0
+                    }
                 }
             }
             None => 0
@@ -464,6 +539,9 @@ pub extern fn ggrs_session_add_local_input(handle: CSessionHandle, player_handle
                     }
                     CSession::P2P(p2p) => {
                         p2p.add_local_input(player_handle, input).unwrap();
+                    }
+                    CSession::Spectator(_) => {
+                        return;
                     }
                 };
             }
@@ -492,6 +570,14 @@ pub extern fn ggrs_session_advance_frame(handle: CSessionHandle) {
                     }
                     CSession::P2P(p2p) => {
                         match p2p.advance_frame() {
+                            Ok(req) => {
+                                ggrs_requests = req
+                            }
+                            Err(_) => return
+                        }
+                    }
+                    CSession::Spectator(spectator) => {
+                        match spectator.advance_frame() {
                             Ok(req) => {
                                 ggrs_requests = req
                             }
@@ -581,6 +667,20 @@ pub extern fn ggrs_session_process_events(handle: CSessionHandle) -> () {
                                 GgrsEvent::DesyncDetected{..} => c_events.push_back(CEvent::new_desync_detected())
                             }
                         }
+                    }
+                    CSession::Spectator(spectator) => {
+                        for event in spectator.events() {
+                            match event {
+                                GgrsEvent::Synchronizing{..} => c_events.push_back(CEvent::new_synchronizing()),
+                                GgrsEvent::Synchronized{..} => c_events.push_back(CEvent::new_synchronized()),
+                                GgrsEvent::Disconnected{..} => c_events.push_back(CEvent::new_disconnected()),
+                                GgrsEvent::NetworkInterrupted{..} => c_events.push_back(CEvent::new_network_interrupted()),
+                                GgrsEvent::NetworkResumed{..} => c_events.push_back(CEvent::new_network_resumed()),
+                                GgrsEvent::WaitRecommendation{skip_frames} => c_events.push_back(CEvent::new_wait_recommendation(&skip_frames)),
+                                GgrsEvent::DesyncDetected{..} => c_events.push_back(CEvent::new_desync_detected())
+                            }
+                        }
+
                     }
                 };
             }
